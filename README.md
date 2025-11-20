@@ -66,6 +66,198 @@ disponibilidade dos dados.
 
 
 ### __3. Introdução o Spark__
+#### __3.1 Spark__
+- Plataforma de computação em cluster tolerante a falhas.
+- Open source.
+- Processamento em memória.
+- Escalável, particionado, paralelismo
+- Suporta várias linguagens (Scala, Pyrhon, R, SQL).
+
+#### __3.2 Dataframe__
+- Tabelas com linas e colunas.
+- Dataframe são imutáveis.  Uma transformação gera um novo dataframe.
+- Com schema conhecdo.
+- Colunas podem ter tipos diferentes.
+- Existência de análises comuns: agrupar, ordenar, filtrar.
+- O Spark pode otimizar análises através de planos de execução.
+
+#### __3.2 Lazy Evaluation__
+No Spark, **lazy evaluation** (avaliação preguiçosa) significa:
+
+> O Spark **não executa** suas operações assim que você escreve o código.
+> Ele só **executa de verdade** quando você manda uma *ação* (action).
+
+#### __3.2.1. Transformations x Actions__
+
+No Spark temos:
+
+#### ✅ Transformations (preguiçosas)
+
+Ex.: `select`, `filter`, `withColumn`, `groupBy`, `join`, etc.
+
+* Quando se faz:
+
+  ```python
+  df2 = df.filter(df.id > 10)
+  df3 = df2.select("id", "nome")
+  ```
+
+  **Nada é executado ainda.**
+  O Spark só vai **montando um plano de execução** (um grafo de operações).
+
+#### ✅ Actions (disparam a execução)
+
+Ex.: `show()`, `count()`, `collect()`, `write`, `save`, etc.
+
+* Quando se faz:
+
+  ```python
+  df3.show()
+  ```
+
+  O Spark:
+
+  * lê os dados,
+  * aplica `filter`,
+  * aplica `select`,
+  * e mostra o resultado.
+
+---
+
+#### __3.2.2. Por que o Spark faz isso?__
+
+Porque o lazy evaluation permite:
+
+1. **Otimização do plano completo**
+
+   * Ele vê **toda a sequência** de passos antes de rodar.
+   * Aí pode:
+
+     * empurrar `filter` o mais cedo possível (menos dados para processar),
+     * combinar operações,
+     * evitar leituras/movimentações desnecessárias.
+
+2. **Menos leituras e menos custo**
+
+   * QUando são feitas várias transformations e nunca chama uma action,
+     o Spark **não gasta recurso à toa**.
+
+3. **Tolerância a falha**
+
+   * Ele guarda o *lineage* (histórico de transformations).
+   * Se algo falha, consegue **recalcular uma parte** a partir da origem.
+
+---
+
+#### __3.2.3. Exemplo em PySpark__
+
+```python
+# nada disso executa de imediato
+df = spark.read.parquet("s3://meu-bucket/dados")
+df_filtrado = df.filter(df.ano == 2024)
+df_agregado = df_filtrado.groupBy("estado").count()
+
+# aqui o Spark realmente executa o plano todo
+df_agregado.show()
+```
+
+* O processamento **só acontece** quando chamamos `show()`.
+
+#### __3.3 Particionamento e Bucketing__
+- Os dados são particionados por padrão.
+- Podem ser particionados explicitamemte em disco (partitioned by) ou em memória - repartition() ou coalesce().
+- O bucketing é semelhante a ao particionamento, mas com númerofixo de particções.
+- O bucketing é ideal para colunas com alta cardinalidade.
+- Particionamento e Bucketing podem ser usados em conjunto.
+
+#### __3.3 Arquitetura e componetes do Spark__
+- Componentes: <br> - Machine Learning (Mlib). <br> - SQL (Spark SQL). <br> - Processamento em Streaming. <br> - Processameno de grafos.
+- Estrutura: <br> - Driver: inicializa SparkSession; solcota recursos computacionais de cluster manager; transforma as operações em DAGs e as distribui pelos executers. <br> - Manager: gerencia os recusros de cluster (built-in standalone; YARN; Mesos; Kubernetes).<br> - Executers: roda em cada nó do cluster, executando as tarefas.
+
+#### __3.4 Spark Context e Session__
+Boa, essa é bem importante pra prova e pro dia a dia.
+
+#### __3.4.1. SparkContext (sc)__
+
+O **SparkContext** é o *ponto de entrada de baixo nível* do Spark, responsável por:
+
+* Conectar sua aplicação ao **cluster** (ou ao modo local).
+* Gerenciar os **executors** e recursos (CPU, memória).
+* Enviar tarefas para o cluster.
+* Trabalhar com a API de **RDDs** (Resilient Distributed Datasets).
+
+Historicamente, o código começava assim (Scala/Python antigos):
+
+```python
+from pyspark import SparkConf, SparkContext
+
+conf = SparkConf().setAppName("MinhaApp").setMaster("local[*]")
+sc = SparkContext(conf=conf)
+```
+
+O `sc` era utilizado para:
+
+```python
+rdd = sc.textFile("meu_arquivo.txt")
+```
+
+Atualmente quase não se cria `SparkContext` “na mão” — ele fica escondido dentro da `SparkSession`.
+
+---
+
+#### __3.4.2. SparkSession (spark)__
+
+A **SparkSession** é o *ponto de entrada unificado* do Spark (desde a versão 2.0):
+
+> É o objeto principal para trabalhar com **DataFrame**, **Spark SQL**, **Structured Streaming**, catálogo de tabelas etc.
+
+Exemplo típico em PySpark:
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder \
+    .appName("MinhaApp") \
+    .getOrCreate()
+```
+
+Com a `spark` você faz:
+
+```python
+df = spark.read.parquet("meus_dados.parquet")
+df.createOrReplaceTempView("minha_tabela")
+spark.sql("SELECT * FROM minha_tabela WHERE ano = 2024").show()
+```
+
+---
+
+#### __3.4.3. Relação entre SparkSession e SparkContext__
+
+* A `SparkSession` **encapsula** um `SparkContext`.
+* O acesso é efetuado da seguinte forma:
+
+  ```python
+  sc = spark.sparkContext
+  ```
+
+Resumindo:
+
+* **SparkContext** = engine de baixo nível (conexão com o cluster, RDDs).
+* **SparkSession** = camada de alto nível, usada no dia a dia (DataFrames, SQL, streaming), que *usa* o SparkContext por baixo dos panos.
+
+* `SparkContext`
+
+  * Ponto de entrada **antigo** e de **baixo nível**.
+  * Conecta ao cluster e gerencia execução.
+  * Trabalha com **RDD**.
+
+* `SparkSession`
+
+  * Ponto de entrada **moderno e recomendado**.
+  * Unifica: SQL + DataFrame + Streaming + catálogo.
+  * Internamente contém um `SparkContext`.
+
+
 ### __4. Conhecendo o Databricks__ 
 ### __5. Data Frames, Delta, Delta Lake__
 ### __6. Gráficos e Dashboards__
